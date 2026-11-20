@@ -1,0 +1,57 @@
+name: mirror apk + store
+
+# 【2026-11-20 用户定】把 xiealon/apk 与 xiealon/store 的**当前文件树**镜像到本仓库。
+# 全程 GitHub Actions 内网，不走本机上传（本机 → GitHub 很慢）。
+#
+# 为什么只镜像「当前树」而不是 --mirror 全历史：
+#   apk 历史 955 MB、store 历史 2.2 GB，单次 push 会顶到 GitHub 的 2 GB 上限；
+#   这两个仓是「放当前版本二进制包」的仓库，内容价值 > 历史价值。
+#   所以 clone --depth=1 + rsync 覆盖，只有内容变化才提交 —— 增量很小。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"        # 每天 02:00（北京）
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 同步 apk + store 的当前树
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          : > SOURCES.txt
+          for r in apk store; do
+            echo "==> $r"
+            rm -rf "/tmp/$r"
+            git clone --depth=1 --quiet \
+              "https://x-access-token:${TOKEN}@github.com/xiealon/$r.git" "/tmp/$r"
+            head=$(git -C "/tmp/$r" rev-parse HEAD)
+            mkdir -p "$r"
+            rsync -a --delete --exclude='.git' "/tmp/$r/" "$r/"
+            printf '%s  source=xiealon/%s  HEAD=%s  synced=%s\n' \
+              "$r" "$r" "$head" "$(date -u +%FT%TZ)" >> SOURCES.txt
+            echo "    文件数 $(find "$r" -type f | wc -l)，体积 $(du -sh "$r" | cut -f1)"
+          done
+          echo "--- SOURCES.txt ---"; cat SOURCES.txt
+          git add -A
+          if git diff --cached --quiet; then
+            echo "无变化，跳过提交"
+            exit 0
+          fi
+          git commit -m "mirror: $(date -u +%Y.%m.%d-%H%M) apk+store"
+          git push
