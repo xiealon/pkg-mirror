@@ -1,0 +1,51 @@
+name: Sync daed from upstream
+# 从 kenzok8/openwrt-daede 最新 release 拉 daed / vmlinux-btf，
+# 直接提交进 run/x86/daed/，全程 GitHub 内部网络，不经本地中转。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 18 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # 与 sync-upstream-apks 共用同一把锁，避免两个工作流同时 push
+    concurrency:
+      group: apk-repo-writer
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Pull latest daed + vmlinux-btf from upstream
+        run: |
+          set -euo pipefail
+          API=https://api.github.com/repos/kenzok8/openwrt-daede/releases
+          TAG=$(curl -fsSL "$API?per_page=10" \
+                | jq -r 'map(select(.prerelease==false))|sort_by(.published_at)|last|.tag_name')
+          echo "upstream tag = $TAG"
+          mkdir -p /tmp/up
+          curl -fsSL "$API/tags/$TAG" > /tmp/rel.json
+          jq -r '.assets[].browser_download_url' /tmp/rel.json \
+            | grep -E '/(daed-[0-9.]+-r[0-9]+-x86_64|vmlinux-btf-6\.[0-9.]+-r[0-9]+-x86_64)\.apk$' > /tmp/urls.txt || true
+          cat /tmp/urls.txt
+          while read -r u; do
+            [ -n "$u" ] || continue
+            curl -fsSL -o "/tmp/up/$(basename "$u")" "$u"
+            echo "  + $(basename "$u") $(stat -c%s "/tmp/up/$(basename "$u")") B"
+          done < /tmp/urls.txt
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          rm -f run/x86/daed/daed-*.apk
+          cp -f /tmp/up/*.apk run/x86/daed/
+          ls -la run/x86/daed/
+          git add -A run/x86/daed
+          if git diff --cached --quiet; then
+            echo "无变化"; exit 0
+          fi
+          git commit -m "feat(apk): run/x86/daed 同步上游 $TAG"
+          git pull --rebase --autostash
+          git push

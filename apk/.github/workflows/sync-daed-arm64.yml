@@ -1,0 +1,57 @@
+name: Sync daed arm64 (final)
+
+# 【2026-11-10】daed 上游已停止维护，这版是最后一个。
+# 原来只有 run/x86/daed/ 有自动同步，arm64 两个架构停在 2026.06.14-r1。
+#
+# 为什么用 Actions 而不是本地 API 推：
+#   24 MB 的 apk base64 后是 30.9 MB 请求体，POST /git/blobs 会返回
+#   401 Bad credentials + SSL EOF（网关拦截大 body）。Actions 内部用
+#   git push，不走这条路径。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Pull daed aarch64 apks and commit
+        run: |
+          set -euo pipefail
+          API=https://api.github.com/repos/kenzok8/openwrt-daede/releases
+          TAG=$(curl -fsSL "$API?per_page=10" \
+                | jq -r 'map(select(.prerelease==false))|sort_by(.published_at)|last|.tag_name')
+          echo "upstream tag = $TAG"
+          curl -fsSL "$API/tags/$TAG" > /tmp/rel.json
+
+          for pair in "arm64:aarch64_generic" "arm64-a53:aarch64_cortex-a53"; do
+            dir="${pair%%:*}"
+            arch="${pair##*:}"
+            url=$(jq -r '.assets[].browser_download_url' /tmp/rel.json \
+                  | grep -E "/daed-[0-9.]+-r[0-9]+-${arch}\.apk$" | head -n1)
+            if [ -z "$url" ]; then
+              echo "::error::上游找不到 $arch 的 daed apk"; exit 1
+            fi
+            base=$(basename "$url")
+            ver=$(echo "$base" | sed -E "s/^daed-([0-9.]+-r[0-9]+)-${arch}\.apk$/\1/")
+            if [ -z "$ver" ] || [ "$ver" = "$base" ]; then
+              echo "::error::解析版本失败：$base"; exit 1
+            fi
+            echo "== $dir : $base -> daed-${ver}.apk"
+            rm -f "run/$dir/daed/daed-"*.apk
+            curl -fsSL -o "run/$dir/daed/daed-${ver}.apk" "$url"
+            ls -l "run/$dir/daed/daed-${ver}.apk"
+          done
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A run/arm64/daed run/arm64-a53/daed
+          if git diff --cached --quiet; then
+            echo "无变化"; exit 0
+          fi
+          git commit -m "feat(apk): arm64 / arm64-a53 的 daed 同步到上游 $TAG（终版）"
+          git push
