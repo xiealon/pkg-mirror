@@ -1,2 +1,2 @@
-apk  source=xiealon/apk  HEAD=0ce710de6fadcbf342d51fd7834f8780f7085df3  synced=2026-11-20T08:57:40Z
-store  source=xiealon/store  HEAD=5367beeafdc8893bbc12657b9e9de638144b9493  synced=2026-11-20T08:57:54Z
+apk  source=xiealon/apk  HEAD=0ce710de6fadcbf342d51fd7834f8780f7085df3  synced=2026-11-20T09:08:01Z
+store  source=xiealon/store  HEAD=5367beeafdc8893bbc12657b9e9de638144b9493  synced=2026-11-20T09:08:15Z
